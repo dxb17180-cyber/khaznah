@@ -22,6 +22,7 @@ from pathlib import Path
 
 import requests
 import yt_dlp
+from fb_scraper import FacebookDownloader
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
@@ -81,6 +82,19 @@ async def health_server():
                     body = _j.dumps({"ok": False, "error": str(e)[:200]}, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
+            elif self.path.startswith("/fb"):
+                # Self-check: one fixed public Facebook reel, no login.
+                try:
+                    info = FacebookDownloader().get_fb_video_info(
+                        "https://www.facebook.com/reel/1195289147628387")
+                    body = _j.dumps({
+                        "ok": bool(info.get("hd") or info.get("sd")),
+                        "title": (info.get("title") or "")[:80],
+                    }, ensure_ascii=False).encode("utf-8")
+                except Exception as e:
+                    body = _j.dumps({"ok": False, "error": str(e)[:200]}, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
             elif self.path.startswith("/yt"):
                 # Self-check: one fixed public video through the live egress.
                 proxy = os.environ.get("PROXY_URL", "socks5://127.0.0.1:1080").strip()
@@ -103,7 +117,7 @@ async def health_server():
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
             else:
-                body = "خزنة ok v11 (warp)".encode("utf-8")
+                body = "خزنة ok v12 (fb)".encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -196,6 +210,46 @@ async def download_video(update, url):
         cap = (info.get("title") or "خزنة")[:100] + cap_note if "cap_note" in locals() else (info.get("title") or "خزنة")[:100]
         with f.open("rb") as fh:
             await update.message.reply_video(fh, caption=cap)
+        LAST_EVENT["stage"] = "done"
+        LAST_EVENT["error"] = ""
+    except Exception as e:
+        LAST_EVENT["stage"] = "error"
+        LAST_EVENT["error"] = str(e)[:300]
+        await update.message.reply_text(friendly_error(e))
+    finally:
+        for p in out.iterdir():
+            p.unlink(missing_ok=True)
+        out.rmdir()
+
+
+async def download_facebook(update, url):
+    """Public Facebook videos/reels: scrape the CDN link, no login needed."""
+    out = Path(tempfile.mkdtemp(prefix="khazna-fb-"))
+    try:
+        loop = asyncio.get_running_loop()
+        info = await loop.run_in_executor(
+            None, lambda: FacebookDownloader().get_fb_video_info(url))
+        media = info.get("hd") or info.get("sd")
+        if not media:
+            await update.message.reply_text(
+                "ما لقيت فيديو 🤍 لو المنشور خاص أو الرابط يحتاج تسجيل دخول ما أقدر أفتحه.")
+            return
+
+        def fetch():
+            r = requests.get(media, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+            r.raise_for_status()
+            return r.content
+
+        data = await loop.run_in_executor(None, fetch)
+        if len(data) > MAX_UPLOAD_BYTES:
+            await update.message.reply_text(
+                f"الملف كبير ({size_text(len(data))}) 🤍 حد تليجرام 45 MB.")
+            return
+        f = out / "video.mp4"
+        f.write_bytes(data)
+        with f.open("rb") as fh:
+            await update.message.reply_video(
+                fh, caption=(info.get("title") or "خزنة")[:100])
         LAST_EVENT["stage"] = "done"
         LAST_EVENT["error"] = ""
     except Exception as e:
@@ -348,11 +402,8 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE, mode="auto"
         return
     u = m.group(0)
     LAST_EVENT["text"] = u[:200]
-    if "facebook.com" in u or "fb.me" in u:
-        await update.message.reply_text(
-            "فايسبوك يحتاج تسجيل دخول 🤍 ما أقدر أحمّل منشوراته بدون كوكيز. "
-            "جرّب رابط يوتيوب أو تيك توك أو إنستغرام."
-        )
+    if "facebook.com" in u or "fb.me" in u or "fb.watch" in u:
+        await download_facebook(update, u)
         return
     LAST_EVENT["stage"] = "downloading"
     await update.message.chat.send_action(ChatAction.TYPING)
