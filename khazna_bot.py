@@ -51,7 +51,7 @@ async def health_server():
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
             else:
-                body = "خزنة ok v3".encode("utf-8")
+                body = "خزنة ok v4".encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -229,6 +229,8 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE, mode="auto"
     if mode == "photo":
         await download_photos(update, u)
     elif mode == "video":
+        await download_video(update, u)
+    elif "/reel/" in u or "/reels/" in u or "/tv/" in u or any(x in u for x in (".mp4", "?video", "&video")):
         await download_video(update, u)
     elif host_of(u) in ("instagram.com", "pixabay.com", "unsplash.com"):
         await download_photos(update, u)
