@@ -47,7 +47,7 @@ async def health_server():
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.end_headers()
-            self.wfile.write("خزنة ok".encode("utf-8"))
+            self.wfile.write("خزنة ok v2".encode("utf-8"))
 
         def log_message(self, *a):
             pass
