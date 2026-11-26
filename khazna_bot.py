@@ -53,10 +53,7 @@ def friendly_error(text):
     """Turn a raw yt-dlp error into a message a user can act on."""
     t = str(text).lower()
     if any(marker in t for marker in YOUTUBE_BLOCK_MARKERS):
-        return (
-            "يوتيوب يمنع التحميل من سيرفرات الاستضافة 🤍 "
-            "البوت يحتاج بروكسي سكني (PROXY_URL) عشان يشتغل للناس كلها."
-        )
+        return "يوتيوب عطى رابط تحميل فاشل 🤍 جرّب بعد دقيقة، أو أرسل رابط ثاني."
     return f"ما قدرت أحمّله 🤍 ({str(text)[:120]})"
 
 
@@ -71,8 +68,21 @@ async def health_server():
                 body = _j.dumps(LAST_EVENT, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
+            elif self.path.startswith("/warp"):
+                # Verifies the free Cloudflare WARP egress used for YouTube.
+                proxy = os.environ.get("PROXY_URL", "socks5://127.0.0.1:1080").strip()
+                try:
+                    ip = requests.get(
+                        "https://api.ipify.org", timeout=12,
+                        proxies={"http": proxy, "https": proxy},
+                    ).text.strip()
+                    body = _j.dumps({"ok": True, "ip": ip}, ensure_ascii=False).encode("utf-8")
+                except Exception as e:
+                    body = _j.dumps({"ok": False, "error": str(e)[:200]}, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
             else:
-                body = "خزنة ok v10 (proxy-ready)".encode("utf-8")
+                body = "خزنة ok v11 (warp)".encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -142,7 +152,7 @@ async def download_video(update, url):
             "retries": 2,
             "extractor_args": {"youtube": {"player_client": ["android", "tv", "web_safari"]}},
         }
-        proxy = os.environ.get("PROXY_URL", "").strip()
+        proxy = os.environ.get("PROXY_URL", "socks5://127.0.0.1:1080").strip()
         if proxy:
             opts["proxy"] = proxy
         loop = asyncio.get_running_loop()
