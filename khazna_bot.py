@@ -51,7 +51,7 @@ async def health_server():
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
             else:
-                body = "خزنة ok v5".encode("utf-8")
+                body = "خزنة ok v6".encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -119,6 +119,7 @@ async def download_video(update, url):
             "no_warnings": True,
             "socket_timeout": 25,
             "retries": 2,
+            "extractor_args": {"youtube": {"player_client": ["tv", "web_safari"]}},
         }
         loop = asyncio.get_running_loop()
         info = await loop.run_in_executor(None, lambda: _ytdlp_download(opts, url))
