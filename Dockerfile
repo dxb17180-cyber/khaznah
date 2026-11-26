@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY khazna_bot.py gen_warp.py ./
+COPY khazna_bot.py fb_scraper.py gen_warp.py ./
 
 # Free Cloudflare WARP egress: register a WireGuard profile at build time and
 # expose it as a local SOCKS5 proxy via wireproxy (pure userspace, no root).
