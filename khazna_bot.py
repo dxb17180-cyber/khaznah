@@ -36,6 +36,7 @@ IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 _rates = defaultdict(deque)
 _log_lock = threading.Lock()
+LAST_EVENT = {"text": "", "stage": "", "error": ""}
 
 
 async def health_server():
@@ -44,10 +45,18 @@ async def health_server():
 
     class H(BaseHTTPRequestHandler):
         def do_GET(self):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            import json as _j
+            if self.path.startswith("/debug"):
+                body = _j.dumps(LAST_EVENT, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+            else:
+                body = "خزنة ok v3".encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write("خزنة ok v2".encode("utf-8"))
+            self.wfile.write(body)
 
         def log_message(self, *a):
             pass
@@ -104,7 +113,7 @@ async def download_video(update, url):
     try:
         opts = {
             "outtmpl": str(out / "%(id)s.%(ext)s"),
-            "format": "best[filesize<=45M]/best[filesize_approx<=45M]/best[ext=mp4][height<=720]/best[height<=720]/best",
+            "format": "best[filesize<=45M]/best[filesize_approx<=45M]/best[ext=mp4][height<=480]/best[height<=480]/worst[ext=mp4]/worst",
             "quiet": True,
             "noplaylist": True,
             "no_warnings": True,
@@ -202,6 +211,9 @@ async def download_photos(update, url):
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE, mode="auto"):
     cid = update.message.chat_id
+    LAST_EVENT["text"] = (update.message.text or "")[:200]
+    LAST_EVENT["stage"] = "start"
+    LAST_EVENT["error"] = ""
     if not allowed(cid):
         await update.message.reply_text("هدّي سرعتك شوي 🤍 ٥ طلبات بالدقيقة، رجّع بعد شوي.")
         return
@@ -211,6 +223,8 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE, mode="auto"
         await update.message.reply_text("أرسل رابط يبدأ بـ https 🤍")
         return
     u = m.group(0)
+    LAST_EVENT["text"] = u[:200]
+    LAST_EVENT["stage"] = "downloading"
     await update.message.chat.send_action(ChatAction.TYPING)
     if mode == "photo":
         await download_photos(update, u)
@@ -223,7 +237,15 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE, mode="auto"
 
 
 async def on_text(update, context):
-    await handle(update, context, "auto")
+    try:
+        await handle(update, context, "auto")
+    except Exception as e:
+        LAST_EVENT["stage"] = "error"
+        LAST_EVENT["error"] = str(e)[:300]
+        try:
+            await update.message.reply_text(f"صار خطأ 🤍 ({str(e)[:120]})")
+        except Exception:
+            pass
 
 
 async def video_cmd(update, context):
