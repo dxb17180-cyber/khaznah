@@ -81,6 +81,27 @@ async def health_server():
                     body = _j.dumps({"ok": False, "error": str(e)[:200]}, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
+            elif self.path.startswith("/yt"):
+                # Self-check: one fixed public video through the live egress.
+                proxy = os.environ.get("PROXY_URL", "socks5://127.0.0.1:1080").strip()
+                check_opts = {
+                    "quiet": True, "no_warnings": True, "noplaylist": True,
+                    "extractor_args": {"youtube": {"player_client": ["android", "tv", "web_safari"]}},
+                }
+                if proxy:
+                    check_opts["proxy"] = proxy
+                try:
+                    info = _ytdlp_download(
+                        check_opts, "https://www.youtube.com/shorts/Kg4uxRWyN04")
+                    body = _j.dumps({
+                        "ok": True,
+                        "title": (info.get("title") or "")[:80],
+                        "formats": len(info.get("formats") or []),
+                    }, ensure_ascii=False).encode("utf-8")
+                except Exception as e:
+                    body = _j.dumps({"ok": False, "error": str(e)[:200]}, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
             else:
                 body = "خزنة ok v11 (warp)".encode("utf-8")
                 self.send_response(200)
