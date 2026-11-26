@@ -20,6 +20,7 @@ from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import requests
 import yt_dlp
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
@@ -51,7 +52,7 @@ async def health_server():
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
             else:
-                body = "خزنة ok v7".encode("utf-8")
+                body = "خزنة ok v9".encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -119,7 +120,7 @@ async def download_video(update, url):
             "no_warnings": True,
             "socket_timeout": 25,
             "retries": 2,
-            "extractor_args": {"youtube": {"player_client": ["tv", "web_safari"]}},
+            "extractor_args": {"youtube": {"player_client": ["android", "tv", "web_safari"]}},
         }
         loop = asyncio.get_running_loop()
         info = await loop.run_in_executor(None, lambda: _ytdlp_download(opts, url))
@@ -210,8 +211,46 @@ async def download_photos(update, url):
         out.rmdir()
 
 
+async def twitter_photos(update, url):
+    """Fetch tweet photos from X's public syndication endpoint (no login)."""
+    m = re.search(r"/status/(\d+)", url)
+    if not m:
+        return False
+    tid = m.group(1)
+    loop = asyncio.get_running_loop()
+    def fetch():
+        j = requests.get(
+            "https://cdn.syndication.twimg.com/tweet-result",
+            params={"id": tid, "lang": "en"}, timeout=20,
+            headers={"User-Agent": "Mozilla/5.0"},
+        ).json()
+        urls = []
+        for x in j.get("mediaDetails", []):
+            u = x.get("media_url_https") or x.get("video", {}).get("poster")
+            if u:
+                urls.append(u)
+        return urls[:MAX_IMAGES]
+    try:
+        urls = await loop.run_in_executor(None, fetch)
+    except Exception:
+        return False
+    if not urls:
+        return False
+    for u in urls:
+        try:
+            data = await loop.run_in_executor(
+                None, lambda: requests.get(u, timeout=25).content)
+            if data:
+                await update.message.reply_photo(data)
+        except Exception:
+            continue
+    return True
+
+
 async def download_smart(update, url):
-    """Try photo gallery first, fall back to video when none found."""
+    """Try direct photos, then gallery, then video."""
+    if host_of(url) in ("twitter.com", "x.com") and await twitter_photos(update, url):
+        return
     out = Path(tempfile.mkdtemp(prefix="khazna-smart-"))
     try:
         loop = asyncio.get_running_loop()
