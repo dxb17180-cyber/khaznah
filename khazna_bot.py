@@ -51,7 +51,7 @@ async def health_server():
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
             else:
-                body = "خزنة ok v6".encode("utf-8")
+                body = "خزنة ok v7".encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -210,6 +210,32 @@ async def download_photos(update, url):
         out.rmdir()
 
 
+async def download_smart(update, url):
+    """Try photo gallery first, fall back to video when none found."""
+    out = Path(tempfile.mkdtemp(prefix="khazna-smart-"))
+    try:
+        loop = asyncio.get_running_loop()
+        cmd = ["gallery-dl", "--range", f"1-{MAX_IMAGES}", "-d", str(out), url]
+        proc = await loop.run_in_executor(None, lambda: subprocess.run(cmd, capture_output=True, timeout=60))
+        files = [p for p in out.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXT]
+        if files:
+            for f in sorted(files, key=lambda p: p.stat().st_size)[:MAX_IMAGES]:
+                with f.open("rb") as fh:
+                    await update.message.reply_photo(fh)
+            return
+    except Exception:
+        pass
+    finally:
+        for p in out.rglob("*"):
+            if p.is_file():
+                p.unlink(missing_ok=True)
+        for p in sorted(out.rglob("*"), key=lambda x: len(x.parts), reverse=True):
+            if p.is_dir():
+                p.rmdir()
+        out.rmdir()
+    await download_video(update, url)
+
+
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE, mode="auto"):
     cid = update.message.chat_id
     LAST_EVENT["text"] = (update.message.text or "")[:200]
@@ -239,8 +265,8 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE, mode="auto"
         await download_video(update, u)
     elif "/reel/" in u or "/reels/" in u or "/tv/" in u or any(x in u for x in (".mp4", "?video", "&video")):
         await download_video(update, u)
-    elif host_of(u) in ("instagram.com", "pixabay.com", "unsplash.com"):
-        await download_photos(update, u)
+    elif host_of(u) in ("twitter.com", "x.com", "instagram.com", "pixabay.com", "unsplash.com"):
+        await download_smart(update, u)
     else:
         await download_video(update, u)
 
