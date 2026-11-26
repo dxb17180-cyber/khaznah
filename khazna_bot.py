@@ -104,7 +104,7 @@ async def download_video(update, url):
     try:
         opts = {
             "outtmpl": str(out / "%(id)s.%(ext)s"),
-            "format": "best[filesize<=45M]/best[filesize_approx<=45M]/best[ext=mp4]/best",
+            "format": "best[filesize<=45M]/best[filesize_approx<=45M]/best[ext=mp4][height<=720]/best[height<=720]/best",
             "quiet": True,
             "noplaylist": True,
             "no_warnings": True,
@@ -119,11 +119,16 @@ async def download_video(update, url):
             return
         f = max(files, key=lambda p: p.stat().st_size)
         if f.stat().st_size > MAX_UPLOAD_BYTES:
-            await update.message.reply_text(
-                f"الملف كبير ({size_text(f.stat().st_size)}) 🤍 حد تليجرام 45 MB. جرّب رابط بجودة أقل."
-            )
-            return
-        cap = (info.get("title") or "خزنة")[:100]
+            await update.message.chat.send_action(ChatAction.TYPING)
+            f = await loop.run_in_executor(None, lambda: compress_video(f, MAX_UPLOAD_BYTES))
+            if f.stat().st_size > MAX_UPLOAD_BYTES:
+                await update.message.reply_text(
+                    f"الملف كبير حتى بعد الضغط ({size_text(f.stat().st_size)}) 🤍 حد تليجرام 45 MB."
+                )
+                return
+            cap_note = " (ضغطناه عشان يدخل)"
+
+        cap = (info.get("title") or "خزنة")[:100] + cap_note if "cap_note" in locals() else (info.get("title") or "خزنة")[:100]
         with f.open("rb") as fh:
             await update.message.reply_video(fh, caption=cap)
     except Exception as e:
@@ -132,6 +137,29 @@ async def download_video(update, url):
         for p in out.iterdir():
             p.unlink(missing_ok=True)
         out.rmdir()
+
+
+def compress_video(src: Path, limit: int) -> Path:
+    """Shrink with ffmpeg until under Telegram's limit. Returns a new file."""
+    tries = [(720, "28"), (540, "30"), (480, "32"), (360, "34")]
+    for height, crf in tries:
+        dst = src.with_name(src.stem + f"-{height}.mp4")
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
+            "-vf", f"scale=-2:{height}",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", crf,
+            "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart",
+            str(dst),
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=180)
+            if dst.exists() and dst.stat().st_size <= limit:
+                src.unlink(missing_ok=True)
+                return dst
+        except subprocess.TimeoutExpired:
+            pass
+        dst.unlink(missing_ok=True)
+    return src
 
 
 def _ytdlp_download(opts, url):
