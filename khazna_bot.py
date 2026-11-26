@@ -51,7 +51,7 @@ async def health_server():
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
             else:
-                body = "خزنة ok v4".encode("utf-8")
+                body = "خزنة ok v5".encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -224,6 +224,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE, mode="auto"
         return
     u = m.group(0)
     LAST_EVENT["text"] = u[:200]
+    if "facebook.com" in u or "fb.me" in u:
+        await update.message.reply_text(
+            "فايسبوك يحتاج تسجيل دخول 🤍 ما أقدر أحمّل منشوراته بدون كوكيز. "
+            "جرّب رابط يوتيوب أو تيك توك أو إنستغرام."
+        )
+        return
     LAST_EVENT["stage"] = "downloading"
     await update.message.chat.send_action(ChatAction.TYPING)
     if mode == "photo":
