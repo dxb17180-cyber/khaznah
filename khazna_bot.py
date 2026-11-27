@@ -55,8 +55,8 @@ def friendly_error(text):
     """Turn a raw yt-dlp error into a message a user can act on."""
     t = str(text).lower()
     if any(marker in t for marker in YOUTUBE_BLOCK_MARKERS):
-        return "يوتيوب عطى رابط تحميل فاشل 🤍 جرّب بعد دقيقة، أو أرسل رابط ثاني."
-    return f"ما قدرت أحمّله 🤍 ({str(text)[:120]})"
+        return "يوتيوب عطى رابط تحميل فاشل. جرّب بعد دقيقة، أو أرسل رابط ثاني."
+    return f"ما قدرت أحمّله ({str(text)[:120]})"
 
 
 async def health_server():
@@ -129,7 +129,7 @@ async def health_server():
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
             else:
-                body = "خزنة ok v13 (snap)".encode("utf-8")
+                body = "خزن ok v15".encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -170,19 +170,27 @@ def size_text(n):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "هلا 🤍 أنا خزنة. أرسل لي رابط فيديو أو صور من يوتيوب، إنستغرام، تيك توك "
-        "أو أي موقع مدعوم، وأرسلها لك هنا.\n\n"
-        "أوامر: /video رابط • /photo رابط • /help\n"
-        "الحد: 45 MB للملف، 10 صور، 5 طلبات بالدقيقة."
+        "مرحباً، أنا خزن. أحفظ لك الفيديوهات والصور من الروابط العامة.\n\n"
+        "المنصات المدعومة:\n"
+        "يوتيوب، إنستغرام، تيك توك، فيسبوك، سناب شات، إكس، ريديت، "
+        "ثريدز، بينترست، تويتش، فيميو، ديلي موشن، لينكد إن، تيليجرام.\n\n"
+        "الأوامر:\n"
+        "/video رابط — تنزيل فيديو\n"
+        "/photo رابط — تنزيل صور\n"
+        "/help — عرض المساعدة\n\n"
+        "الحدود: 45 ميجابايت للملف، 10 صور، 5 طلبات في الدقيقة.\n"
+        "المحتوى الخاص أو الذي يتطلب تسجيل دخول غير مدعوم."
     )
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "فقط أرسل الرابط وأنا أختار 🤍\n"
+        "أرسل الرابط وسأختار نوع المحتوى تلقائياً.\n\n"
         "/video رابط — فيديو\n"
-        "/photo رابط — صور من ألبوم أو منشور\n"
-        "ما أفتح حسابات خاصة ولا أطلب كوكيز."
+        "/photo رابط — صور من ألبوم أو منشور\n\n"
+        "المنصات المدعومة: يوتيوب، إنستغرام، تيك توك، فيسبوك، سناب شات، إكس، "
+        "ريديت، ثريدز، بينترست، تويتش، فيميو، ديلي موشن، لينكد إن، تيليجرام.\n\n"
+        "لا أفتح الحسابات الخاصة ولا أطلب بيانات دخول."
     )
 
 
@@ -206,7 +214,7 @@ async def download_video(update, url):
         info = await loop.run_in_executor(None, lambda: _ytdlp_download(opts, url))
         files = [p for p in out.iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXT]
         if not files:
-            await update.message.reply_text("ما لقيت فيديو في الرابط 🤍 جرّب /photo.")
+            await update.message.reply_text("ما لقيت فيديو في الرابط. جرّب /photo.")
             return
         f = max(files, key=lambda p: p.stat().st_size)
         if f.stat().st_size > MAX_UPLOAD_BYTES:
@@ -214,7 +222,7 @@ async def download_video(update, url):
             f = await loop.run_in_executor(None, lambda: compress_video(f, MAX_UPLOAD_BYTES))
             if f.stat().st_size > MAX_UPLOAD_BYTES:
                 await update.message.reply_text(
-                    f"الملف كبير حتى بعد الضغط ({size_text(f.stat().st_size)}) 🤍 حد تليجرام 45 MB."
+                    f"الملف كبير حتى بعد الضغط ({size_text(f.stat().st_size)}) حد تليجرام 45 MB."
                 )
                 return
             cap_note = " (ضغطناه عشان يدخل)"
@@ -246,11 +254,37 @@ def snap_media_info(url):
     m = (re.search(r'<meta property="og:video" content="([^"]+)"', r.text)
          or re.search(r"<video[^>]+src=\"([^\"]+)\"", r.text))
     if not m:
-        raise RuntimeError("Snapchat ما أعطى رابط فيديو 🤍 الرابط ممكن يكون خاص أو محذوف.")
+        raise RuntimeError("Snapchat ما أعطى رابط فيديو. الرابط ممكن يكون خاص أو محذوف.")
     media = html.unescape(m.group(1))
     tm = re.search(r'<meta property="og:title" content="([^"]+)"', r.text)
     title = html.unescape(tm.group(1)) if tm else "خزن"
     return title, media
+
+
+def strip_snap_watermark(path: Path) -> Path:
+    """Snapchat bakes its logo + username into the top-left of the web video.
+
+    Blur that corner with ffmpeg delogo; keep the original if ffmpeg fails.
+    """
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", str(path)],
+            capture_output=True, text=True, timeout=20)
+        w, h = (int(v) for v in probe.stdout.strip().split("x")[:2])
+        x, y = int(w * 0.015), int(h * 0.047)
+        dw, dh = int(w * 0.34), int(h * 0.182)
+        out = path.with_name("clean.mp4")
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(path),
+             "-vf", f"delogo=x={x}:y={y}:w={dw}:h={dh}", "-c:a", "copy", str(out)],
+            capture_output=True, timeout=90)
+        if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            path.unlink(missing_ok=True)
+            return out
+    except Exception:
+        pass
+    return path
 
 
 async def download_snap(update, url):
@@ -265,12 +299,13 @@ async def download_snap(update, url):
             return r.content
 
         data = await loop.run_in_executor(None, fetch)
-        if len(data) > MAX_UPLOAD_BYTES:
-            await update.message.reply_text(
-                f"الملف كبير ({size_text(len(data))}) 🤍 حد تليجرام 45 MB.")
-            return
         f = out / "video.mp4"
         f.write_bytes(data)
+        f = await loop.run_in_executor(None, lambda: strip_snap_watermark(f))
+        if f.stat().st_size > MAX_UPLOAD_BYTES:
+            await update.message.reply_text(
+                f"الملف كبير ({size_text(f.stat().st_size)}) حد تليجرام 45 MB.")
+            return
         with f.open("rb") as fh:
             await update.message.reply_video(fh, caption=title[:100])
         LAST_EVENT["stage"] = "done"
@@ -295,7 +330,7 @@ async def download_facebook(update, url):
         media = info.get("hd") or info.get("sd")
         if not media:
             await update.message.reply_text(
-                "ما لقيت فيديو 🤍 لو المنشور خاص أو الرابط يحتاج تسجيل دخول ما أقدر أفتحه.")
+                "ما لقيت فيديو. لو المنشور خاص أو الرابط يحتاج تسجيل دخول ما أقدر أفتحه.")
             return
 
         def fetch():
@@ -306,7 +341,7 @@ async def download_facebook(update, url):
         data = await loop.run_in_executor(None, fetch)
         if len(data) > MAX_UPLOAD_BYTES:
             await update.message.reply_text(
-                f"الملف كبير ({size_text(len(data))}) 🤍 حد تليجرام 45 MB.")
+                f"الملف كبير ({size_text(len(data))}) حد تليجرام 45 MB.")
             return
         f = out / "video.mp4"
         f.write_bytes(data)
@@ -365,7 +400,7 @@ async def download_photos(update, url):
         files = [p for p in out.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXT]
         if not files:
             await update.message.reply_text(
-                "ما لقيت صور 🤍 ربما المنشور خاص أو الموقع يحتاج تسجيل دخول."
+                "ما لقيت صور. ربما المنشور خاص أو الموقع يحتاج تسجيل دخول."
             )
             return
         files = sorted(files, key=lambda p: p.stat().st_size)[:MAX_IMAGES]
@@ -373,9 +408,9 @@ async def download_photos(update, url):
             with f.open("rb") as fh:
                 await update.message.reply_photo(fh)
     except subprocess.TimeoutExpired:
-        await update.message.reply_text("الرابط بطيء جداً 🤍 جرّب مرة ثانية.")
+        await update.message.reply_text("الرابط بطيء جداً. جرّب مرة ثانية.")
     except Exception as e:
-        await update.message.reply_text(f"ما قدرت أحمّل الصور 🤍 ({str(e)[:120]})")
+        await update.message.reply_text(f"ما قدرت أحمّل الصور ({str(e)[:120]})")
     finally:
         for p in out.rglob("*"):
             if p.is_file():
@@ -456,12 +491,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE, mode="auto"
     LAST_EVENT["stage"] = "start"
     LAST_EVENT["error"] = ""
     if not allowed(cid):
-        await update.message.reply_text("هدّي سرعتك شوي 🤍 ٥ طلبات بالدقيقة، رجّع بعد شوي.")
+        await update.message.reply_text("هدّي سرعتك شوي. ٥ طلبات بالدقيقة، رجّع بعد شوي.")
         return
     url = clean_url(update.message.text or "")
     m = URL_RE.search(url)
     if not m:
-        await update.message.reply_text("أرسل رابط يبدأ بـ https 🤍")
+        await update.message.reply_text("أرسل رابط يبدأ بـ https.")
         return
     u = m.group(0)
     LAST_EVENT["text"] = u[:200]
@@ -492,7 +527,7 @@ async def on_text(update, context):
         LAST_EVENT["stage"] = "error"
         LAST_EVENT["error"] = str(e)[:300]
         try:
-            await update.message.reply_text(f"صار خطأ 🤍 ({str(e)[:120]})")
+            await update.message.reply_text(f"صار خطأ ({str(e)[:120]})")
         except Exception:
             pass
 
