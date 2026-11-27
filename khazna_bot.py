@@ -10,6 +10,7 @@ rejected with a clear message.
 Run: BOT_TOKEN=... python khazna_bot.py
 """
 import asyncio
+import html
 import os
 import re
 import subprocess
@@ -82,6 +83,17 @@ async def health_server():
                     body = _j.dumps({"ok": False, "error": str(e)[:200]}, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
+            elif self.path.startswith("/snap"):
+                # Self-check: one fixed public Snapchat Spotlight clip.
+                try:
+                    title, media = snap_media_info(
+                        "https://www.snapchat.com/spotlight/W7_EDlXWTBiXAEEniNoMPwAAYdnR4eHJ6YXFjAZ9jqOLlAZ9jqIFXAAAAAQ")
+                    body = _j.dumps({"ok": bool(media), "title": title[:80]},
+                                    ensure_ascii=False).encode("utf-8")
+                except Exception as e:
+                    body = _j.dumps({"ok": False, "error": str(e)[:200]}, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
             elif self.path.startswith("/fb"):
                 # Self-check: one fixed public Facebook reel, no login.
                 try:
@@ -117,7 +129,7 @@ async def health_server():
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
             else:
-                body = "خزنة ok v12 (fb)".encode("utf-8")
+                body = "خزنة ok v13 (snap)".encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -210,6 +222,57 @@ async def download_video(update, url):
         cap = (info.get("title") or "خزنة")[:100] + cap_note if "cap_note" in locals() else (info.get("title") or "خزنة")[:100]
         with f.open("rb") as fh:
             await update.message.reply_video(fh, caption=cap)
+        LAST_EVENT["stage"] = "done"
+        LAST_EVENT["error"] = ""
+    except Exception as e:
+        LAST_EVENT["stage"] = "error"
+        LAST_EVENT["error"] = str(e)[:300]
+        await update.message.reply_text(friendly_error(e))
+    finally:
+        for p in out.iterdir():
+            p.unlink(missing_ok=True)
+        out.rmdir()
+
+
+SNAP_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+
+def snap_media_info(url):
+    """Public Snapchat Spotlight: og:video / <video src> carries the MP4."""
+    r = requests.get(url, timeout=25, headers={
+        "User-Agent": SNAP_UA, "Accept-Language": "en-US,en;q=0.9"})
+    r.raise_for_status()
+    m = (re.search(r'<meta property="og:video" content="([^"]+)"', r.text)
+         or re.search(r"<video[^>]+src=\"([^\"]+)\"", r.text))
+    if not m:
+        raise RuntimeError("Snapchat ما أعطى رابط فيديو 🤍 الرابط ممكن يكون خاص أو محذوف.")
+    media = html.unescape(m.group(1))
+    tm = re.search(r'<meta property="og:title" content="([^"]+)"', r.text)
+    title = html.unescape(tm.group(1)) if tm else "خزن"
+    return title, media
+
+
+async def download_snap(update, url):
+    out = Path(tempfile.mkdtemp(prefix="khazna-snap-"))
+    try:
+        loop = asyncio.get_running_loop()
+        title, media = await loop.run_in_executor(None, lambda: snap_media_info(url))
+
+        def fetch():
+            r = requests.get(media, timeout=60, headers={"User-Agent": SNAP_UA})
+            r.raise_for_status()
+            return r.content
+
+        data = await loop.run_in_executor(None, fetch)
+        if len(data) > MAX_UPLOAD_BYTES:
+            await update.message.reply_text(
+                f"الملف كبير ({size_text(len(data))}) 🤍 حد تليجرام 45 MB.")
+            return
+        f = out / "video.mp4"
+        f.write_bytes(data)
+        with f.open("rb") as fh:
+            await update.message.reply_video(fh, caption=title[:100])
         LAST_EVENT["stage"] = "done"
         LAST_EVENT["error"] = ""
     except Exception as e:
@@ -402,6 +465,9 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE, mode="auto"
         return
     u = m.group(0)
     LAST_EVENT["text"] = u[:200]
+    if "snapchat.com" in u:
+        await download_snap(update, u)
+        return
     if "facebook.com" in u or "fb.me" in u or "fb.watch" in u:
         await download_facebook(update, u)
         return
